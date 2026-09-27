@@ -5,11 +5,33 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { scanRepository } from "./scanner.js";
 import { analyzeConfiguration } from "./services/aiAnalyzer.js";
+import { applyPlan, planFixes } from "./services/fixPlanner.js";
+import fs from "node:fs";
 
 dotenv.config();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEMO_REPO_PATH = path.join(__dirname, "demo-repo");
+const DEMO_PRISTINE_PATH = path.join(__dirname, "demo-pristine");
+
+// Shared repo resolution. Only the demo fixture is writable;
+// arbitrary paths are scan-only.
+function resolveRepo(repository) {
+  const name = repository || "demo-project";
+  if (name === "demo" || name === "demo-project") {
+    return { name, repoPath: DEMO_REPO_PATH, writable: true };
+  }
+  return { name, repoPath: path.resolve(name), writable: false };
+}
+
+function scanOrUseBody(body) {
+  if (body?.scan?.variables) {
+    const { name, repoPath, writable } = resolveRepo(body.scan.repository);
+    return { scan: body.scan, name, repoPath, writable };
+  }
+  const { name, repoPath, writable } = resolveRepo(body?.repository);
+  return { scan: scanRepository(repoPath, name), name, repoPath, writable };
+}
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -71,4 +93,55 @@ app.post("/api/analyze", async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`EnvGuard backend listening on http://localhost:${PORT}`);
+});
+
+// Preview only — plans safe fixes, writes NOTHING.
+// Body: { scan } or { repository }.
+app.post("/api/fix", (req, res) => {
+  try {
+    const { scan, repoPath } = scanOrUseBody(req.body);
+    res.json(planFixes(scan, repoPath));
+  } catch (err) {
+    res.status(400).json({ error: err.message || "Fix planning failed" });
+  }
+});
+
+// Apply planned fixes (demo fixture only), then automatically re-scan.
+// Body: { scan } or { repository }.
+app.post("/api/fix/apply", (req, res) => {
+  try {
+    const { scan, name, repoPath, writable } = scanOrUseBody(req.body);
+    if (!writable) {
+      return res.status(403).json({ error: "Automatic fixes are only enabled for the demo repository" });
+    }
+    const before = {
+      healthScore: scan.healthScore,
+      missing: scan.variables.missing.length,
+      unused: scan.variables.unused.length,
+      docs: scan.documentationIssues.length,
+    };
+    const plan = planFixes(scan, repoPath);
+    const applied = applyPlan(plan, repoPath);
+    const after = scanRepository(repoPath, name);
+    res.json({ applied, before, after, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(400).json({ error: err.message || "Fix apply failed" });
+  }
+});
+
+// Restore the intentionally broken demo fixture (hackathon demo repeat).
+app.post("/api/demo/reset", (req, res) => {
+  try {
+    const restored = [];
+    for (const file of [".env.example", "README.md"]) {
+      const src = path.join(DEMO_PRISTINE_PATH, file);
+      const dest = path.join(DEMO_REPO_PATH, file);
+      if (!fs.existsSync(src)) throw new Error(`Pristine copy missing: ${file}`);
+      fs.copyFileSync(src, dest);
+      restored.push(file);
+    }
+    res.json({ reset: true, repository: "demo-project", restored, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(500).json({ error: err.message || "Demo reset failed" });
+  }
 });

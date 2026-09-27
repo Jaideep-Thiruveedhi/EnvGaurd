@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import {
-  mockBobFix,
   mockHealth,
   mockInsights,
   mockIssues,
@@ -45,6 +44,18 @@ export default function App() {
   // AI analysis of the scan findings (via POST /api/analyze).
   const [analysis, setAnalysis] = useState(null);
   const [analysisError, setAnalysisError] = useState("");
+  // Fix workflow (via POST /api/fix + /api/fix/apply).
+  const [fixPreview, setFixPreview] = useState(null);
+  const [fixResult, setFixResult] = useState(null);
+  const [fixError, setFixError] = useState("");
+  // Activity log for the demo flow.
+  const [activity, setActivity] = useState([]);
+
+  const logActivity = (message) =>
+    setActivity((prev) => [
+      ...prev,
+      { time: new Date().toLocaleTimeString(), message },
+    ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -67,6 +78,9 @@ export default function App() {
     setFixState("idle");
     setAnalysis(null);
     setAnalysisError("");
+    setFixPreview(null);
+    setFixResult(null);
+    setFixError("");
   };
 
   const handleScan = async () => {
@@ -79,6 +93,9 @@ export default function App() {
     setFixState("idle");
     setAnalysis(null);
     setAnalysisError("");
+    setFixPreview(null);
+    setFixResult(null);
+    setFixError("");
     try {
       const res = await fetch(`${API_BASE}/api/scan`, {
         method: "POST",
@@ -90,6 +107,7 @@ export default function App() {
       setScanResult(data);
       setRepo({ name: data.repository, branch: "local", provider: "local" });
       setScanned(true);
+      logActivity(`Repository scanned — health ${data.healthScore}%`);
     } catch (err) {
       setScanError(err.message || "Could not reach the backend.");
       setScanned(false);
@@ -124,15 +142,82 @@ export default function App() {
       if (!res.ok) throw new Error(`Analysis failed (HTTP ${res.status})`);
       setAnalysis(await res.json());
       setBobState("done");
+      logActivity("Issues analyzed");
     } catch (err) {
       setAnalysisError(err.message || "Could not reach the analysis service.");
       setBobState("idle");
     }
   };
 
-  const handleFix = () => {
-    setFixState("loading");
-    setTimeout(() => setFixState("done"), 1600);
+  const handleFix = async () => {
+    if (!scanResult || offlineDemo) return;
+    setFixState("preview-loading");
+    setFixError("");
+    setFixResult(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/fix`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scan: scanResult }),
+      });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        throw new Error(errBody.error || `Fix planning failed (HTTP ${res.status})`);
+      }
+      setFixPreview(await res.json());
+      setFixState("preview");
+      logActivity("Fixes proposed — awaiting review");
+    } catch (err) {
+      setFixError(err.message || "Could not plan fixes.");
+      setFixState("idle");
+    }
+  };
+
+  const handleCancelFix = () => {
+    setFixPreview(null);
+    setFixError("");
+    setFixState("idle");
+  };
+
+  const handleApplyFixes = async () => {
+    if (!scanResult || offlineDemo) return;
+    setFixState("applying");
+    setFixError("");
+    try {
+      const res = await fetch(`${API_BASE}/api/fix/apply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scan: scanResult }),
+      });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        throw new Error(errBody.error || `Apply failed (HTTP ${res.status})`);
+      }
+      const data = await res.json();
+      setFixResult(data);
+      setScanResult(data.after); // dashboard refreshes with the re-scan
+      setFixPreview(null);
+      setFixState("applied");
+      logActivity(
+        `Fixes applied (${data.applied.changedFiles.join(", ") || "no files"}) — health ${data.before.healthScore}% → ${data.after.healthScore}%`
+      );
+      logActivity("Repository re-scanned");
+    } catch (err) {
+      setFixError(err.message || "Could not apply fixes.");
+      setFixState("preview");
+    }
+  };
+
+  const handleResetDemo = async () => {
+    setFixError("");
+    try {
+      const res = await fetch(`${API_BASE}/api/demo/reset`, { method: "POST" });
+      if (!res.ok) throw new Error(`Reset failed (HTTP ${res.status})`);
+      logActivity("Demo reset to original broken state");
+      await handleScan();
+    } catch (err) {
+      setFixError(err.message || "Could not reset the demo.");
+    }
   };
 
   // ── Derive dashboard data: real scan wins, offline mock is the fallback ──
@@ -243,6 +328,13 @@ export default function App() {
                 className="rounded-lg bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-slate-950 hover:bg-emerald-400 transition disabled:opacity-60"
               >
                 {scanning ? "Scanning…" : "Scan Repository"}
+              </button>
+              <button
+                onClick={handleResetDemo}
+                title="Restore the intentionally broken demo repository"
+                className="rounded-lg border border-slate-700 px-4 py-2.5 text-xs font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition"
+              >
+                Reset Demo
               </button>
             </div>
           </div>
@@ -406,11 +498,95 @@ export default function App() {
                 </button>
                 <button
                   onClick={handleFix}
-                  disabled={fixState === "loading"}
+                  disabled={fixState === "preview-loading" || fixState === "applying" || !live}
+                  title={!live ? "Run a live scan first" : ""}
                   className="mt-2 w-full rounded-lg border border-violet-500/40 px-4 py-2.5 text-sm font-semibold text-violet-200 hover:bg-violet-500/10 transition disabled:opacity-60"
                 >
-                  {fixState === "loading" ? "Generating fixes…" : "Fix Issues with Bob"}
+                  {fixState === "preview-loading"
+                    ? "Planning fixes…"
+                    : fixState === "applying"
+                      ? "Applying fixes…"
+                      : "Fix Issues with Bob"}
                 </button>
+                {fixError && (
+                  <p className="mt-4 text-xs leading-relaxed rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-red-200">
+                    {fixError}
+                  </p>
+                )}
+                {fixState === "preview" && fixPreview && (
+                  <div className="mt-4 rounded-lg border border-emerald-500/30 bg-slate-950/60 p-3">
+                    <p className="text-[11px] font-medium uppercase tracking-wider text-slate-400">
+                      Proposed changes
+                    </p>
+                    {fixPreview.proposedChanges.length === 0 && (
+                      <p className="mt-2 text-xs text-slate-300">
+                        Nothing to fix automatically — configuration is consistent.
+                      </p>
+                    )}
+                    {fixPreview.proposedChanges.map((change) => (
+                      <div key={change.file} className="mt-2">
+                        <code className="text-xs font-mono font-semibold text-slate-200">
+                          {change.file}
+                        </code>
+                        <ul className="mt-1 space-y-0.5">
+                          {change.additions.map((line) => (
+                            <li
+                              key={line}
+                              className="text-[11px] font-mono text-emerald-300 break-all"
+                            >
+                              + {line}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                    {fixPreview.reviewItems?.length > 0 && (
+                      <div className="mt-2 space-y-1">
+                        {fixPreview.reviewItems.map((item) => (
+                          <p key={item.variable} className="text-[11px] leading-relaxed text-amber-300">
+                            ⚠ {item.variable} — review before removal (never auto-deleted)
+                          </p>
+                        ))}
+                      </div>
+                    )}
+                    <div className="mt-3 flex gap-2">
+                      <button
+                        onClick={handleApplyFixes}
+                        className="flex-1 rounded-lg bg-emerald-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-emerald-400 transition"
+                      >
+                        Apply Fixes
+                      </button>
+                      <button
+                        onClick={handleCancelFix}
+                        className="flex-1 rounded-lg border border-slate-700 px-4 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800 transition"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {fixState === "applied" && fixResult && (
+                  <div className="mt-4 rounded-lg border border-emerald-500/30 bg-slate-950/60 p-3">
+                    <p className="text-xs font-semibold text-emerald-300">
+                      Fixes applied ✅
+                    </p>
+                    <p className="mt-2 text-2xl font-bold">
+                      {fixResult.before.healthScore}
+                      <span className="text-slate-500">% → </span>
+                      <span className="text-emerald-400">{fixResult.after.healthScore}%</span>
+                    </p>
+                    <p className="mt-1 text-[11px] text-slate-400">
+                      {fixResult.after.variables.missing.length} missing ·{" "}
+                      {fixResult.after.documentationIssues.length} documentation issues ·{" "}
+                      {fixResult.after.variables.unused.length} unused (requires review)
+                    </p>
+                    {fixResult.applied.warnings?.length > 0 && (
+                      <p className="mt-2 text-[11px] text-amber-300">
+                        ⚠ {fixResult.applied.warnings.join(" ")}
+                      </p>
+                    )}
+                  </div>
+                )}
                 {analysisError && (
                   <p className="mt-4 text-xs leading-relaxed rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-red-200">
                     {analysisError} Your scan results above are unaffected — you can retry analysis anytime.
@@ -468,11 +644,6 @@ export default function App() {
                     ))}
                   </div>
                 )}
-                {fixState === "done" && (
-                  <p className="mt-3 text-xs leading-relaxed rounded-lg border border-slate-700 bg-slate-950/60 p-3 text-slate-300 whitespace-pre-wrap font-mono">
-                    {mockBobFix}
-                  </p>
-                )}
               </section>
 
               <section className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
@@ -509,6 +680,20 @@ export default function App() {
               </section>
             </div>
           </div>
+        )}
+        {activity.length > 0 && (
+          <section className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
+            <h2 className="font-semibold">Activity</h2>
+            <ul className="mt-3 space-y-1.5">
+              {activity.map((entry, i) => (
+                <li key={i} className="text-xs text-slate-400">
+                  <span className="font-mono text-slate-500">{entry.time}</span>
+                  <span className="mx-2 text-slate-600">·</span>
+                  <span className="text-slate-300">{entry.message}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
         )}
       </main>
     </div>
