@@ -21,12 +21,36 @@ function scoreColor(score) {
   return "text-red-400";
 }
 
+function scoreBar(score) {
+  if (score >= 80) return "bg-emerald-400";
+  if (score >= 60) return "bg-amber-400";
+  return "bg-red-400";
+}
+
 function formatTimestamp(iso) {
   try {
     return new Date(iso).toLocaleString();
   } catch {
     return iso;
   }
+}
+
+// Intentional loading indicator: cycles through real operation stages
+// while an async action is in flight. No fake delays — it only renders
+// while the underlying request is pending.
+function LoadingLine({ steps }) {
+  const [index, setIndex] = useState(0);
+  useEffect(() => {
+    if (steps.length < 2) return;
+    const timer = setInterval(() => setIndex((v) => (v + 1) % steps.length), 1400);
+    return () => clearInterval(timer);
+  }, [steps.join("|")]);
+  return (
+    <span className="inline-flex items-center gap-2 text-sm text-slate-300">
+      <span className="h-3.5 w-3.5 shrink-0 rounded-full border-2 border-emerald-400 border-t-transparent animate-spin" />
+      {steps[index]}
+    </span>
+  );
 }
 
 export default function App() {
@@ -50,6 +74,8 @@ export default function App() {
   const [fixError, setFixError] = useState("");
   // Activity log for the demo flow.
   const [activity, setActivity] = useState([]);
+  // Expandable issue-card details, keyed by issue id.
+  const [expanded, setExpanded] = useState({});
 
   const logActivity = (message) =>
     setActivity((prev) => [
@@ -83,8 +109,7 @@ export default function App() {
     setFixError("");
   };
 
-  const handleScan = async () => {
-    const target = repo?.name || "demo-project";
+  const runScan = async (target) => {
     if (!repo) setRepo({ name: target, branch: "local", provider: "local" });
     setScanning(true);
     setScanError("");
@@ -96,6 +121,7 @@ export default function App() {
     setFixPreview(null);
     setFixResult(null);
     setFixError("");
+    setExpanded({});
     try {
       const res = await fetch(`${API_BASE}/api/scan`, {
         method: "POST",
@@ -107,13 +133,22 @@ export default function App() {
       setScanResult(data);
       setRepo({ name: data.repository, branch: "local", provider: "local" });
       setScanned(true);
-      logActivity(`Repository scanned — health ${data.healthScore}%`);
+      logActivity(`Repository scanned — health ${data.healthScore} / 100`);
     } catch (err) {
-      setScanError(err.message || "Could not reach the backend.");
+      setScanError(`${err.message || "Could not reach the backend."} Check that the repository path is accessible and the backend is running.`);
       setScanned(false);
     } finally {
       setScanning(false);
     }
+  };
+
+  const handleScan = () => runScan(repo?.name || "demo-project");
+
+  // One-click demo: loads the broken fixture and scans it. No credentials.
+  const handleLaunchDemo = () => {
+    setRepo({ name: "demo-project", branch: "local", provider: "local" });
+    logActivity("Demo launched");
+    return runScan("demo-project");
   };
 
   const handleOfflineDemo = () => {
@@ -339,8 +374,11 @@ export default function App() {
             </div>
           </div>
           {scanning && (
-            <div className="mt-5 h-1.5 rounded-full bg-slate-800 overflow-hidden">
-              <div className="h-full w-1/2 rounded-full bg-emerald-400 animate-pulse" />
+            <div className="mt-5 space-y-3">
+              <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                <div className="h-full w-1/2 rounded-full bg-emerald-400 animate-pulse" />
+              </div>
+              <LoadingLine steps={["Scanning repository…", "Tracing configuration usage…"]} />
             </div>
           )}
           {scanError && !scanning && (
@@ -357,22 +395,42 @@ export default function App() {
         </section>
 
         {!showResults ? (
-          /* Empty state — communicates what EnvGuard does */
-          <section className="rounded-2xl border border-dashed border-slate-700 bg-slate-900/30 p-10 text-center">
-            <h3 className="text-lg font-semibold">
-              Find missing, unused, and undocumented env variables
-            </h3>
-            <p className="mt-2 text-sm text-slate-400 max-w-xl mx-auto">
-              EnvGuard scans your repo for configuration problems, scores its
-              health, and shows exactly what to fix — with IBM Bob ready to
-              explain and patch issues.
+          /* Landing — value proposition first, demo one click away */
+          <section className="rounded-2xl border border-slate-800 bg-slate-900/50 p-10 sm:p-14 text-center">
+            <span className="inline-block text-[11px] font-medium rounded-full border border-violet-500/40 bg-violet-500/10 text-violet-300 px-3 py-1">
+              Built with IBM Bob 2.0
+            </span>
+            <h2 className="mt-4 text-4xl font-bold tracking-tight">EnvGuard</h2>
+            <p className="mt-2 text-lg text-slate-200">
+              Know exactly what your project needs to run.
             </p>
-            <button
-              onClick={handleScan}
-              className="mt-6 rounded-lg bg-emerald-500 px-6 py-2.5 text-sm font-semibold text-slate-950 hover:bg-emerald-400 transition"
-            >
-              Load demo repository
-            </button>
+            <p className="mt-3 text-sm text-slate-400 max-w-xl mx-auto">
+              Detect configuration inconsistencies, understand why they matter,
+              and fix them before they waste developer time.
+            </p>
+            <div className="mt-8 flex flex-wrap justify-center gap-3">
+              <button
+                onClick={handleLaunchDemo}
+                disabled={scanning}
+                className="rounded-lg bg-emerald-500 px-6 py-2.5 text-sm font-semibold text-slate-950 hover:bg-emerald-400 transition disabled:opacity-60"
+              >
+                {scanning ? "Scanning…" : "Scan Demo Repository"}
+              </button>
+              <button
+                onClick={handleSelect}
+                className="rounded-lg border border-slate-700 bg-slate-800/60 px-6 py-2.5 text-sm font-medium hover:bg-slate-800 transition"
+              >
+                Select Repository
+              </button>
+            </div>
+            {scanning && (
+              <div className="mt-6 flex justify-center">
+                <LoadingLine steps={["Scanning repository…", "Tracing configuration usage…"]} />
+              </div>
+            )}
+            <p className="mt-6 text-[11px] text-slate-500">
+              No credentials needed — the demo runs fully offline.
+            </p>
           </section>
         ) : (
           <div className="grid gap-6 lg:grid-cols-3">
@@ -385,21 +443,30 @@ export default function App() {
                     <h2 className="text-sm font-medium text-slate-400 uppercase tracking-wider">
                       Configuration Health
                     </h2>
-                    <p className={`mt-1 text-5xl font-bold ${scoreColor(healthScore)}`}>
-                      {healthScore}
-                      <span className="text-xl text-slate-500">%</span>
+                    <p className="mt-1 flex items-baseline gap-1.5">
+                      <span className={`text-5xl font-bold tabular-nums ${scoreColor(healthScore)}`}>
+                        {healthScore}
+                      </span>
+                      <span className="text-xl text-slate-500">/ 100</span>
                     </p>
                   </div>
-                  <p className="text-xs text-slate-500">
-                    {summary.missing} critical · {warningCount} warning need attention
-                  </p>
+                  <div className="text-right text-xs leading-relaxed text-slate-400">
+                    <p>
+                      <span className="font-semibold text-red-300">{summary.missing}</span> critical issues ·{" "}
+                      <span className="font-semibold text-amber-300">{warningCount}</span> warnings ·{" "}
+                      <span className="font-semibold text-emerald-300">{summary.valid}</span> healthy
+                    </p>
+                  </div>
                 </div>
                 <div className="mt-4 h-2.5 rounded-full bg-slate-800 overflow-hidden">
                   <div
-                    className="h-full rounded-full bg-emerald-400"
+                    className={`h-full rounded-full transition-all duration-700 ease-out ${scoreBar(healthScore)}`}
                     style={{ width: `${healthScore}%` }}
                   />
                 </div>
+                <p className="mt-3 text-[11px] text-slate-500">
+                  Configuration consistency score — not a security certification.
+                </p>
                 <div className="mt-5 grid grid-cols-2 sm:grid-cols-4 gap-3">
                   {[
                     ["Missing Variables", summary.missing, "text-red-300"],
@@ -439,32 +506,92 @@ export default function App() {
                   </div>
                 </div>
                 <ul className="mt-4 space-y-3">
-                  {visibleIssues.map((issue) => (
-                    <li
-                      key={issue.id}
-                      className="rounded-xl border border-slate-800 bg-slate-950/60 p-4"
-                    >
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span
-                          className={`text-[11px] font-bold rounded border px-2 py-0.5 ${severityStyle[issue.severity]}`}
+                  {visibleIssues.map((issue) => {
+                    const hasRef = issue.reference && issue.reference !== "—";
+                    const finding = analysis?.issues?.find((a) => a.variable === issue.variable);
+                    const isOpen = Boolean(expanded[issue.id]);
+                    return (
+                      <li
+                        key={issue.id}
+                        className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 hover:border-slate-700 transition"
+                      >
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span
+                            className={`text-[11px] font-bold rounded border px-2 py-0.5 ${severityStyle[issue.severity]}`}
+                          >
+                            {issue.severity}
+                          </span>
+                          <code className="text-sm font-mono font-semibold text-slate-100">
+                            {issue.variable}
+                          </code>
+                          <span className="ml-auto text-[11px] rounded-full border border-slate-700 px-2 py-0.5 text-slate-400">
+                            {issue.status}
+                          </span>
+                        </div>
+                        <div className="mt-3 space-y-1.5 text-sm">
+                          <p>
+                            <span className="text-slate-500">{hasRef ? "Used by: " : "Declared in: "}</span>
+                            <code className="font-mono text-xs text-slate-300">
+                              {hasRef ? issue.reference : issue.file}
+                            </code>
+                          </p>
+                          <p>
+                            <span className="text-slate-500">Problem: </span>
+                            <span className="text-slate-300">{issue.description}</span>
+                          </p>
+                          {finding?.recommendation && (
+                            <p>
+                              <span className="text-slate-500">Recommendation: </span>
+                              <span className="text-slate-300">{finding.recommendation}</span>
+                            </p>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => setExpanded((prev) => ({ ...prev, [issue.id]: !prev[issue.id] }))}
+                          className="mt-2 text-xs font-medium text-slate-400 hover:text-slate-200 transition"
                         >
-                          {issue.severity}
-                        </span>
-                        <code className="text-sm font-mono font-semibold text-slate-100">
-                          {issue.variable}
-                        </code>
-                        <span className="ml-auto text-[11px] rounded-full border border-slate-700 px-2 py-0.5 text-slate-400">
-                          {issue.status}
-                        </span>
-                      </div>
-                      <p className="mt-1.5 text-sm text-slate-300">
-                        {issue.description}
-                      </p>
-                      <p className="mt-1 text-xs text-slate-500 font-mono">
-                        {issue.file} · {issue.reference}
-                      </p>
-                    </li>
-                  ))}
+                          {isOpen ? "Hide details ▲" : "Details ▼"}
+                        </button>
+                        {isOpen && (
+                          <div className="mt-2 rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-xs space-y-1.5">
+                            <p className="text-slate-400">
+                              <span className="text-slate-500">Status: </span>{issue.status}
+                              <span className="mx-2 text-slate-700">|</span>
+                              <span className="text-slate-500">Seen in: </span>
+                              <code className="font-mono">{issue.file}</code>
+                              {hasRef && (
+                                <code className="font-mono"> · {issue.reference}</code>
+                              )}
+                            </p>
+                            {finding?.whyItMatters && (
+                              <p className="text-slate-400">
+                                <span className="text-slate-500">Why this matters: </span>
+                                {finding.whyItMatters}
+                              </p>
+                            )}
+                            {finding?.action && (
+                              <p className="text-slate-400">
+                                <span className="text-slate-500">Suggested action: </span>
+                                {finding.action}
+                              </p>
+                            )}
+                            {finding?.filesToCheck?.length > 0 && (
+                              <div className="flex flex-wrap gap-1.5 pt-1">
+                                {finding.filesToCheck.map((f) => (
+                                  <code
+                                    key={f}
+                                    className="font-mono rounded border border-slate-700 bg-slate-950 px-1.5 py-0.5 text-slate-400"
+                                  >
+                                    {f}
+                                  </code>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
                   {visibleIssues.length === 0 && (
                     <li className="text-sm text-slate-500 text-center py-6">
                       No issues in this category.
@@ -494,7 +621,11 @@ export default function App() {
                   disabled={bobState === "loading"}
                   className="mt-4 w-full rounded-lg bg-violet-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-400 transition disabled:opacity-60"
                 >
-                  {bobState === "loading" ? "Analyzing repository configuration…" : "Analyze Configuration"}
+                  {bobState === "loading" ? (
+                    <LoadingLine steps={["Analyzing inconsistencies…"]} />
+                  ) : (
+                    "Analyze Configuration"
+                  )}
                 </button>
                 <button
                   onClick={handleFix}
@@ -502,11 +633,17 @@ export default function App() {
                   title={!live ? "Run a live scan first" : ""}
                   className="mt-2 w-full rounded-lg border border-violet-500/40 px-4 py-2.5 text-sm font-semibold text-violet-200 hover:bg-violet-500/10 transition disabled:opacity-60"
                 >
-                  {fixState === "preview-loading"
-                    ? "Planning fixes…"
-                    : fixState === "applying"
-                      ? "Applying fixes…"
-                      : "Fix Issues with Bob"}
+                  {fixState === "preview-loading" || fixState === "applying" ? (
+                    <LoadingLine
+                      steps={
+                        fixState === "applying"
+                          ? ["Applying fixes…", "Re-scanning repository…"]
+                          : ["Preparing proposed fixes…"]
+                      }
+                    />
+                  ) : (
+                    "Fix Issues with Bob"
+                  )}
                 </button>
                 {fixError && (
                   <p className="mt-4 text-xs leading-relaxed rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-red-200">
@@ -516,7 +653,12 @@ export default function App() {
                 {fixState === "preview" && fixPreview && (
                   <div className="mt-4 rounded-lg border border-emerald-500/30 bg-slate-950/60 p-3">
                     <p className="text-[11px] font-medium uppercase tracking-wider text-slate-400">
-                      Proposed changes
+                      Proposed fixes
+                    </p>
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      Before: {healthScore} / 100 · {summary.missing} missing ·{" "}
+                      {summary.docs} documentation issues · {summary.unused} unused.
+                      Review before anything changes — .env and source code are never touched.
                     </p>
                     {fixPreview.proposedChanges.length === 0 && (
                       <p className="mt-2 text-xs text-slate-300">
@@ -567,13 +709,17 @@ export default function App() {
                 )}
                 {fixState === "applied" && fixResult && (
                   <div className="mt-4 rounded-lg border border-emerald-500/30 bg-slate-950/60 p-3">
-                    <p className="text-xs font-semibold text-emerald-300">
-                      Fixes applied ✅
+                    <p className="text-[11px] font-medium uppercase tracking-wider text-emerald-300">
+                      After — fixes applied ✓
                     </p>
-                    <p className="mt-2 text-2xl font-bold">
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      Before: {fixResult.before.healthScore} / 100 · {fixResult.before.missing} missing ·{" "}
+                      {fixResult.before.docs} documentation issues · {fixResult.before.unused} unused
+                    </p>
+                    <p className="mt-2 text-2xl font-bold tabular-nums">
                       {fixResult.before.healthScore}
-                      <span className="text-slate-500">% → </span>
-                      <span className="text-emerald-400">{fixResult.after.healthScore}%</span>
+                      <span className="text-slate-500"> / 100 → </span>
+                      <span className="text-emerald-400">{fixResult.after.healthScore} / 100</span>
                     </p>
                     <p className="mt-1 text-[11px] text-slate-400">
                       {fixResult.after.variables.missing.length} missing ·{" "}
@@ -681,15 +827,38 @@ export default function App() {
             </div>
           </div>
         )}
+        {showResults && (
+          <section className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
+            <h2 className="font-semibold">Secrets are never exposed.</h2>
+            <ul className="mt-3 grid gap-2 sm:grid-cols-2 text-xs text-slate-400">
+              <li className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                Actual <code className="font-mono">.env</code> values never leave the backend — only variable names reach the frontend.
+              </li>
+              <li className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                Analysis works on names and metadata, never on secret values.
+              </li>
+              <li className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                Automatic fixes never modify <code className="font-mono">.env</code> or source code — only <code className="font-mono">.env.example</code> and <code className="font-mono">README.md</code>.
+              </li>
+              <li className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                Generated example entries are empty placeholders (<code className="font-mono">NAME=</code>) for developers to fill in locally.
+              </li>
+            </ul>
+          </section>
+        )}
         {activity.length > 0 && (
           <section className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
-            <h2 className="font-semibold">Activity</h2>
-            <ul className="mt-3 space-y-1.5">
+            <h2 className="font-semibold">Activity timeline</h2>
+            <ul className="mt-3 space-y-2.5">
               {activity.map((entry, i) => (
-                <li key={i} className="text-xs text-slate-400">
-                  <span className="font-mono text-slate-500">{entry.time}</span>
-                  <span className="mx-2 text-slate-600">·</span>
-                  <span className="text-slate-300">{entry.message}</span>
+                <li key={i} className="flex items-start gap-3 text-xs">
+                  <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-500/15 border border-emerald-500/40 text-[10px] font-bold text-emerald-400">
+                    ✓
+                  </span>
+                  <div>
+                    <p className="text-slate-200">{entry.message}</p>
+                    <p className="font-mono text-[11px] text-slate-500">{entry.time}</p>
+                  </div>
                 </li>
               ))}
             </ul>

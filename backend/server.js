@@ -33,6 +33,17 @@ function scanOrUseBody(body) {
   return { scan: scanRepository(repoPath, name), name, repoPath, writable };
 }
 
+// User-friendly errors: filesystem failures become actionable messages;
+// technical detail stays in the server log, not the API response.
+function friendlyError(err, fallback) {
+  const msg = err?.message || fallback;
+  if (/ENOENT|EPERM|EACCES|ENOTDIR/i.test(msg)) {
+    console.error(`[${new Date().toISOString()}]`, msg);
+    return "Unable to scan repository. Check that the repository path is accessible.";
+  }
+  return msg;
+}
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
@@ -61,7 +72,7 @@ app.post("/api/scan", (req, res) => {
     const result = scanRepository(repoPath, repository);
     res.json(result);
   } catch (err) {
-    res.status(400).json({ error: err.message || "Scan failed" });
+    res.status(400).json({ error: friendlyError(err, "Scan failed") });
   }
 });
 
@@ -87,7 +98,7 @@ app.post("/api/analyze", async (req, res) => {
     const analysis = await analyzeConfiguration(scan);
     res.json(analysis);
   } catch (err) {
-    res.status(400).json({ error: err.message || "Analysis failed" });
+    res.status(400).json({ error: friendlyError(err, "Analysis failed") });
   }
 });
 
@@ -102,7 +113,7 @@ app.post("/api/fix", (req, res) => {
     const { scan, repoPath } = scanOrUseBody(req.body);
     res.json(planFixes(scan, repoPath));
   } catch (err) {
-    res.status(400).json({ error: err.message || "Fix planning failed" });
+    res.status(400).json({ error: friendlyError(err, "Fix planning failed") });
   }
 });
 
@@ -125,7 +136,7 @@ app.post("/api/fix/apply", (req, res) => {
     const after = scanRepository(repoPath, name);
     res.json({ applied, before, after, timestamp: new Date().toISOString() });
   } catch (err) {
-    res.status(400).json({ error: err.message || "Fix apply failed" });
+    res.status(400).json({ error: friendlyError(err, "Fix apply failed") });
   }
 });
 
@@ -145,3 +156,4 @@ app.post("/api/demo/reset", (req, res) => {
     res.status(500).json({ error: err.message || "Demo reset failed" });
   }
 });
+
