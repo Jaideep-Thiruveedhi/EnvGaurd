@@ -72,6 +72,7 @@ export default function App() {
   const [fixPreview, setFixPreview] = useState(null);
   const [fixResult, setFixResult] = useState(null);
   const [fixError, setFixError] = useState("");
+  const [resetting, setResetting] = useState(false);
   // Activity log for the demo flow.
   const [activity, setActivity] = useState([]);
   // Expandable issue-card details, keyed by issue id.
@@ -244,7 +245,9 @@ export default function App() {
   };
 
   const handleResetDemo = async () => {
+    if (scanning) return;
     setFixError("");
+    setResetting(true);
     try {
       const res = await fetch(`${API_BASE}/api/demo/reset`, { method: "POST" });
       if (!res.ok) throw new Error(`Reset failed (HTTP ${res.status})`);
@@ -252,6 +255,8 @@ export default function App() {
       await handleScan();
     } catch (err) {
       setFixError(err.message || "Could not reset the demo.");
+    } finally {
+      setResetting(false);
     }
   };
 
@@ -359,17 +364,18 @@ export default function App() {
               </button>
               <button
                 onClick={handleScan}
-                disabled={scanning}
+                disabled={scanning || resetting}
                 className="rounded-lg bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-slate-950 hover:bg-emerald-400 transition disabled:opacity-60"
               >
                 {scanning ? "Scanning…" : "Scan Repository"}
               </button>
               <button
                 onClick={handleResetDemo}
+                disabled={scanning || resetting}
                 title="Restore the intentionally broken demo repository"
-                className="rounded-lg border border-slate-700 px-4 py-2.5 text-xs font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition"
+                className="rounded-lg border border-slate-700 px-4 py-2.5 text-xs font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition disabled:opacity-60"
               >
-                Reset Demo
+                {resetting ? "Resetting…" : "Reset Demo"}
               </button>
             </div>
           </div>
@@ -414,7 +420,7 @@ export default function App() {
                 disabled={scanning}
                 className="rounded-lg bg-emerald-500 px-6 py-2.5 text-sm font-semibold text-slate-950 hover:bg-emerald-400 transition disabled:opacity-60"
               >
-                {scanning ? "Scanning…" : "Scan Demo Repository"}
+                {scanning ? "Scanning…" : "Launch Demo"}
               </button>
               <button
                 onClick={handleSelect}

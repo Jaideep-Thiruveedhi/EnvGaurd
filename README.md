@@ -118,6 +118,35 @@ AI_MODEL=granite-3-8b-instruct
 
 Any provider failure falls back to Demo analysis without breaking the scan flow.
 
+## IBM technology usage
+
+- EnvGuard was **built with IBM Bob 2.0** as the development agent that wrote
+  this codebase (see the in-app badge).
+- The application itself does **not** call any Bob runtime API. Analysis goes
+  through the provider-neutral `analyzeConfiguration()` abstraction, which
+  accepts any OpenAI-compatible chat-completions endpoint — including IBM
+  watsonx-hosted Granite models — when `AI_PROVIDER`, `AI_API_URL`,
+  `AI_API_KEY`, and `AI_MODEL` are configured.
+- With no credentials set, the deterministic demo explainer covers the same
+  findings and is always labelled **Demo analysis** in the UI.
+
+## Known limitations
+
+- JS/TS sources only (`process.env`, bracket access, destructuring,
+  `import.meta.env`); other languages are not parsed.
+- Only root-level `.env.example`, `docker-compose.yml/yaml`, and `README.md`
+  drive classification; nested config files are ignored.
+- README matching is plain string inclusion, not semantic analysis.
+- The health score is a fixed-weight heuristic, not an industry standard.
+- Automatic fixes target the demo fixture only (non-demo repos get 403).
+
+## Future improvements
+
+- More language parsers (Python, Go, Java) and nested-config discovery.
+- Real watsonx/Granite credentials for live AI analysis in the demo.
+- One-click removal flow for reviewed unused variables (with backup).
+- CI mode: scan on pull request and comment the health delta.
+
 ## Intentionally out of the MVP
 
 Authentication, databases, GitHub OAuth/integration, chatbot or conversational
