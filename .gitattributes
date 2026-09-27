@@ -1,0 +1,3 @@
+# Normalize line endings to LF on all platforms so the demo
+# reset/apply cycle (which writes LF bytes) never shows phantom diffs.
+* text=auto eol=lf
